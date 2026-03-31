@@ -1,0 +1,7 @@
+*.pyc
+__pycache__/
+tfx_metadata/
+tfx_pipeline_output/
+airflow/
+*.db
+.env
