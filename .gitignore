@@ -1,7 +1,6 @@
-*.pyc
+.venv/
 __pycache__/
-tfx_metadata/
+*.pyc
 tfx_pipeline_output/
-airflow/
-*.db
-.env
+metadata.db
+.DS_Store
