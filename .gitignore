@@ -1,6 +1,22 @@
-.venv/
+# Python bytecode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Environments
+.venv/
+env/
+venv/
+.env
+
+# TFX Outputs 
 tfx_pipeline_output/
-metadata.db
+tfx_pipeline_output_v2/
+pipeline_log.txt
+*.db
+*.db-journal
+
+# OS specific
 .DS_Store
+.vscode/
