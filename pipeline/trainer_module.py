@@ -66,14 +66,19 @@ def run_fn(args: FnArgs):
     ])
 
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
         loss='binary_crossentropy',
         metrics=['BinaryAccuracy']
     )
+    
+    tensorboard_callback = tf.keras.callbacks.TensorBoard(
+        log_dir=args.model_run_dir, 
+        update_freq='batch'
+    )
 
     # Using specified steps or fallback to defaults
-    train_steps = args.train_steps if args.train_steps else 10
-    eval_steps = args.eval_steps if args.eval_steps else 5
+    train_steps = args.train_steps if args.train_steps else 100
+    eval_steps = args.eval_steps if args.eval_steps else 50
 
     # Trainning the model
     model.fit(
@@ -81,7 +86,8 @@ def run_fn(args: FnArgs):
         steps_per_epoch=train_steps,
         validation_data=eval_dataset,
         validation_steps=eval_steps,
-        epochs=1
+        epochs=5,
+        callbacks=[tensorboard_callback]
     )
 
     # Saving the trained model in SavedModel
