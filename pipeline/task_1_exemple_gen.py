@@ -1,16 +1,26 @@
 import os
 import shutil
-import tensorflow as tf
-from tfx.components import CsvExampleGen, StatisticsGen, SchemaGen, ExampleValidator, Transform, Trainer
+
+import tensorflow_model_analysis as tfma
+from tfx.components import (
+    CsvExampleGen,
+    StatisticsGen,
+    SchemaGen,
+    ExampleValidator,
+    Transform,
+    Trainer,
+    Evaluator
+)
 from tfx.dsl.components.common.resolver import Resolver
-from tfx.dsl.input_resolution.strategies.latest_blessed_model_strategy import LatestBlessedModelStrategy
-from tfx.types import standard_artifacts, Channel 
+from tfx.dsl.input_resolution.strategies.latest_blessed_model_strategy import (
+    LatestBlessedModelStrategy
+)
+from tfx.types import Channel, standard_artifacts
 from tfx.proto import trainer_pb2
 from tfx.orchestration import metadata, pipeline
 from tfx.orchestration.local.local_dag_runner import LocalDagRunner
 
-# Pipeline Path Configuration 
-# Setting up base directories for data, modules, and pipeline outputs
+# pipeline paths
 PIPELINE_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_ROOT = os.path.dirname(PIPELINE_DIR)
 DATA_ROOT = os.path.abspath(os.path.join(PROJECT_ROOT, 'data', 'Dataset1_adult', 'source'))
@@ -19,32 +29,81 @@ TRANSFORM_MODULE = os.path.abspath(os.path.join(PIPELINE_DIR, 'transform_module.
 TRAINER_MODULE = os.path.abspath(os.path.join(PIPELINE_DIR, 'trainer_module.py'))
 METADATA_PATH = os.path.join(OUTPUT_DIR, 'metadata.db')
 
-def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, trainer_module, metadata_path):
-    """Initializes the TFX pipeline components."""
+# label used for evaluation
+LABEL_KEY = 'target'
 
-    # Step 1: ExampleGen - Ingesting CSV data and splitting into Train/Eval sets
+
+def _create_eval_config():
+    # config for tfma evaluator
+    return tfma.EvalConfig(
+        model_specs=[
+            tfma.ModelSpec(
+                signature_name='serving_default',
+                label_key=LABEL_KEY,
+                prediction_key='outputs',
+                preprocessing_function_names=['transformed_labels']
+            )
+        ],
+        slicing_specs=[
+            tfma.SlicingSpec(),  # overall
+            tfma.SlicingSpec(feature_keys=['sex']),
+            tfma.SlicingSpec(feature_keys=['race'])
+        ],
+        metrics_specs=[
+            tfma.MetricsSpec(
+                metrics=[
+                    tfma.MetricConfig(
+                        class_name='BinaryAccuracy',
+                        threshold=tfma.MetricThreshold(
+                            value_threshold=tfma.GenericValueThreshold(
+                                lower_bound={'value': 0.5}
+                            )
+                        )
+                    ),
+                    tfma.MetricConfig(
+                        class_name='AUC',
+                        threshold=tfma.MetricThreshold(
+                            value_threshold=tfma.GenericValueThreshold(
+                                lower_bound={'value': 0.5}
+                            ),
+                            change_threshold=tfma.GenericChangeThreshold(
+                                direction=tfma.MetricDirection.HIGHER_IS_BETTER,
+                                absolute={'value': -1e-10}
+                            )
+                        )
+                    )
+                ]
+            )
+        ]
+    )
+
+
+def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, trainer_module, metadata_path):
+    """builds the full tfx pipeline"""
+
+    # step 1: read csv data
     example_gen = CsvExampleGen(input_base=data_root)
 
-    # Step 2: StatisticsGen - Computing descriptive statistics (mean, std, distributions)
+    # step 2: make data stats
     stats_gen = StatisticsGen(examples=example_gen.outputs['examples'])
 
-    # Step 3: SchemaGen - Inferring data types and constraints from statistics
+    # step 3: infer schema
     schema_gen = SchemaGen(statistics=stats_gen.outputs['statistics'])
 
-    # Step 4: ExampleValidator - Checking for data anomalies and schema skews
+    # step 4: check for anomalies
     validator = ExampleValidator(
         statistics=stats_gen.outputs['statistics'],
         schema=schema_gen.outputs['schema']
     )
 
-    # Step 5: Transform - Applying feature engineering defined in transform_module.py
+    # step 5: transform features
     transform = Transform(
         examples=example_gen.outputs['examples'],
         schema=schema_gen.outputs['schema'],
         module_file=transform_module
     )
 
-    # Step 6: Trainer - Training the Keras model using the trainer_module.py
+    # step 6: train model
     trainer = Trainer(
         module_file=trainer_module,
         examples=transform.outputs['transformed_examples'],
@@ -54,47 +113,58 @@ def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, t
         eval_args=trainer_pb2.EvalArgs(num_steps=50)
     )
 
-    # Step 7: Resolver - Retrieving the latest successful (blessed) model for evaluation
+    # step 7: get latest blessed model
     model_resolver = Resolver(
         strategy_class=LatestBlessedModelStrategy,
         model=Channel(type=standard_artifacts.Model),
         model_blessing=Channel(type=standard_artifacts.ModelBlessing)
     ).with_id('latest_blessed_model_resolver')
 
-    # Constructing the pipeline with the defined components
+    # step 8: evaluate model with tfma
+    evaluator = Evaluator(
+        examples=example_gen.outputs['examples'],
+        model=trainer.outputs['model'],
+        baseline_model=model_resolver.outputs['model'],
+        eval_config=_create_eval_config(),
+        schema=schema_gen.outputs['schema']
+    )
+
+    # build pipeline
     return pipeline.Pipeline(
         pipeline_name=pipeline_name,
         pipeline_root=pipeline_root,
         components=[
-            example_gen, 
-            stats_gen, 
-            schema_gen, 
-            validator, 
+            example_gen,
+            stats_gen,
+            schema_gen,
+            validator,
             transform,
             trainer,
-            model_resolver
+            model_resolver,
+            evaluator
         ],
-        enable_cache=False, # Setting this to False to ensure fresh runs for debugging (I spent a lot of time trying to understand why my code didnt run s I found this on the web)
+        enable_cache=False,
         metadata_connection_config=metadata.sqlite_metadata_connection_config(metadata_path)
     )
 
+
 if __name__ == '__main__':
-    # Removing old pipeline outputs to prevent database locks (they are really annoying to deal with and I am not )
+    # clear old output to avoid lock problems
     if os.path.exists(OUTPUT_DIR):
-        print(f"Cleaning old output directory: {OUTPUT_DIR}")
+        print(f"cleaning old output directory: {OUTPUT_DIR}")
         try:
             shutil.rmtree(OUTPUT_DIR)
         except PermissionError:
-            print("Warning: Access denied during cleanup. Ensure no other process is using the metadata DB.")
-    
+            print("warning: access denied during cleanup. close anything using the metadata db and try again.")
+
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    # Defining unique pipeline identity
+    # pipeline name
     unique_pipeline_name = 'adult_census_pipeline_v2'
-    print(f"Starting TFX Pipeline: {unique_pipeline_name}")
+    print(f"starting tfx pipeline: {unique_pipeline_name}")
 
     try:
-        # Executing the pipeline locally
+        # run pipeline locally
         LocalDagRunner().run(
             create_pipeline(
                 pipeline_name=unique_pipeline_name,
@@ -105,6 +175,6 @@ if __name__ == '__main__':
                 metadata_path=METADATA_PATH
             )
         )
-        print("Pipeline execution finished successfully.")
+        print("pipeline execution finished successfully.")
     except Exception as e:
-        print(f"Pipeline execution failed: {e}")
+        print(f"pipeline execution failed: {e}")
