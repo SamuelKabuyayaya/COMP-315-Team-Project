@@ -22,7 +22,12 @@ def preprocessing_fn(inputs):
     for key in CATEGORICAL_FEATURE_KEYS:
         outputs[key] = tft.compute_and_apply_vocabulary(inputs[key])
     
-    # Mapping the label (target) to integer IDs (0 or 1)
-    outputs[LABEL_KEY] = tft.compute_and_apply_vocabulary(inputs[LABEL_KEY])
+    # Converting the label string to a float (0.0 or 1.0) for the Evaluator
+    label = tf.strings.strip(inputs[LABEL_KEY])
+    outputs[LABEL_KEY] = tf.where(
+        tf.equal(label, '>50K'), 
+        tf.cast(1.0, tf.float32), 
+        tf.cast(0.0, tf.float32)
+    )
 
     return outputs
