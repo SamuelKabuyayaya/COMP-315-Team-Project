@@ -25,17 +25,17 @@ LABEL_KEY = 'target'
 
 
 def _combine_transformed_features(features):
-    # stack transformed features into one dense input tensor
+    # stack features into one dense input tensor
     flattened_features = []
 
     for key in FEATURE_KEYS:
         feature_value = features[key]
 
-        # turn sparse into dense
+        # convert sparse tensors to dense
         if isinstance(feature_value, tf.SparseTensor):
             feature_value = tf.sparse.to_dense(feature_value)
 
-        # make everything float32
+        # cast all features to float32
         feature_value = tf.cast(feature_value, tf.float32)
         feature_value = tf.reshape(feature_value, [-1, 1])
         flattened_features.append(feature_value)
@@ -80,20 +80,20 @@ def _input_fn(file_pattern, tf_transform_output, batch_size=32):
 def _get_serve_tf_examples_fn(model, tf_transform_output):
     """Returns a function that parses a serialized tf.Example."""
     
-    # We get the spec of already transformed features
+    # get transformed feature spec
     transformed_feature_spec = tf_transform_output.transformed_feature_spec()
     
-    # We remove the label from the spec as it won't be provided during inference
+    # remove label because inference examples do not include it
     if LABEL_KEY in transformed_feature_spec:
         transformed_feature_spec.pop(LABEL_KEY)
 
     @tf.function
     def serve_tf_examples_fn(serialized_tf_examples):
         """Returns the output to be used in serving using transformed features."""
-        # Parsing the incoming examples using the transformed spec (numeric/IDs)
+        # parse incoming examples with transformed spec
         parsed_features = tf.io.parse_example(serialized_tf_examples, transformed_feature_spec)
         
-        # Formatting features for the Keras model input layer
+        # format features for model input layer
         flattened_features = []
         for key in FEATURE_KEYS:
             f = parsed_features[key]
@@ -131,7 +131,7 @@ def run_fn(args: FnArgs):
         ]
     )
 
-    # send logs to tensorboard
+    # write training logs to tensorboard
     tensorboard_callback = tf.keras.callbacks.TensorBoard(
         log_dir=args.model_run_dir, update_freq='batch'
     )
@@ -148,7 +148,7 @@ def run_fn(args: FnArgs):
         callbacks=[tensorboard_callback]
     )
 
-    # Creating the signature that expects transformed examples (matching Evaluator output)
+    # create serving signature for transformed examples
     signatures = {
         'serving_default': _get_serve_tf_examples_fn(model, tf_transform_output).get_concrete_function(
             tf.TensorSpec(shape=[None], dtype=tf.string, name='examples')

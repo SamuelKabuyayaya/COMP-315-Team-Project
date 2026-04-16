@@ -1,7 +1,7 @@
 import tensorflow as tf
 import tensorflow_transform as tft
 
-# Defining feature groups for processing
+# feature groups used in preprocessing
 NUMERIC_FEATURE_KEYS = [
     'age', 'education-num', 'capital-gain', 'capital-loss', 'hours-per-week'
 ]
@@ -14,15 +14,15 @@ LABEL_KEY = 'target'
 def preprocessing_fn(inputs):
     outputs = {}
 
-    # Scaling numeric features to have mean 0 and variance 1 (Z-score)
+    # scale numeric features with z score
     for key in NUMERIC_FEATURE_KEYS:
         outputs[key] = tft.scale_to_z_score(inputs[key])
 
-    # Converting categorical strings to integer IDs using a generated vocabulary
+    # map categorical strings to vocab ids
     for key in CATEGORICAL_FEATURE_KEYS:
         outputs[key] = tft.compute_and_apply_vocabulary(inputs[key])
     
-    # Converting the label string to a float (0.0 or 1.0) for the Evaluator
+    # map label string to float for evaluator
     label = tf.strings.strip(inputs[LABEL_KEY])
     outputs[LABEL_KEY] = tf.where(
         tf.equal(label, '>50K'), 

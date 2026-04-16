@@ -11,8 +11,8 @@ from tfx.proto import trainer_pb2
 from tfx.orchestration import metadata, pipeline
 from tfx.orchestration.local.local_dag_runner import LocalDagRunner
  
-# Pipeline Path Configuration
-# Setting up base directories for data, modules, and pipeline outputs
+# pipeline path config
+# keep key project paths in one place
 PIPELINE_DIR = os.path.dirname(os.path.realpath(__file__))
 PROJECT_ROOT = os.path.dirname(PIPELINE_DIR)
 DATA_ROOT = '/home/samso/comp315_project/data/Dataset1_adult/source'
@@ -25,29 +25,29 @@ SERVING_MODEL_DIR = os.path.join(OUTPUT_DIR, 'serving_model')
 def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, trainer_module, metadata_path, serving_model_dir):
     """Initializes the TFX pipeline components."""
  
-    # Step 1: ExampleGen - Ingesting CSV data and splitting into Train/Eval sets
+    # step 1: read csv and split train and eval
     example_gen = CsvExampleGen(input_base=data_root)
  
-    # Step 2: StatisticsGen - Computing descriptive statistics (mean, std, distributions)
+    # step 2: compute dataset stats
     stats_gen = StatisticsGen(examples=example_gen.outputs['examples'])
  
-    # Step 3: SchemaGen - Inferring data types and constraints from statistics
+    # step 3: infer schema from stats
     schema_gen = SchemaGen(statistics=stats_gen.outputs['statistics'])
  
-    # Step 4: ExampleValidator - Checking for data anomalies and schema skews
+    # step 4: validate examples against schema
     validator = ExampleValidator(
         statistics=stats_gen.outputs['statistics'],
         schema=schema_gen.outputs['schema']
     )
  
-    # Step 5: Transform - Applying feature engineering defined in transform_module.py
+    # step 5: apply feature transforms
     transform = Transform(
         examples=example_gen.outputs['examples'],
         schema=schema_gen.outputs['schema'],
         module_file=transform_module
     )
  
-    # Step 6: Trainer - Training the Keras model using the trainer_module.py
+    # step 6: train the keras model
     trainer = Trainer(
         module_file=trainer_module,
         examples=transform.outputs['transformed_examples'],
@@ -57,17 +57,17 @@ def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, t
         eval_args=trainer_pb2.EvalArgs(num_steps=50)
     )
  
-    # Step 7: Resolver - Retrieving the latest successful (blessed) model for evaluation
+    # step 7: fetch latest blessed baseline model
     model_resolver = Resolver(
         strategy_class=LatestBlessedModelStrategy,
         model=Channel(type=standard_artifacts.Model),
         model_blessing=Channel(type=standard_artifacts.ModelBlessing)
     ).with_id('latest_blessed_model_resolver')
     
-   # Step 8: Evaluator - Evaluating the current model against baseline and slices
+    # step 8: evaluate current model by overall and slices
     eval_config = tfma.EvalConfig(
         model_specs=[
-            # Указываем label_key, который соответствует названию в transform_module
+            # label key follows transform module output
             tfma.ModelSpec(label_key='target')
         ],
         slicing_specs=[
@@ -90,7 +90,7 @@ def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, t
         eval_config=eval_config
     )
  
-    # Step 9: Pusher - Pushing only blessed models to serving directory
+    # step 9: push model only if blessed
     pusher = Pusher(
         model=trainer.outputs['model'],
         model_blessing=evaluator.outputs['blessing'],
@@ -101,7 +101,7 @@ def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, t
         )
     )
  
-    # Constructing the pipeline with the defined components
+    # build the final pipeline object
     return pipeline.Pipeline(
         pipeline_name=pipeline_name,
         pipeline_root=pipeline_root,
@@ -116,12 +116,12 @@ def create_pipeline(pipeline_name, pipeline_root, data_root, transform_module, t
             evaluator,
             pusher
         ],
-        enable_cache=False, # Setting this to False to ensure fresh runs for debugging
+        enable_cache=False,  # keep false for fresh local runs
         metadata_connection_config=metadata.sqlite_metadata_connection_config(metadata_path)
     )
  
 if __name__ == '__main__':
-    # Removing old pipeline outputs to prevent database locks
+    # clear old outputs to avoid metadata lock issues
     if os.path.exists(OUTPUT_DIR):
         print(f"cleaning old output directory: {OUTPUT_DIR}")
         try:
@@ -131,7 +131,7 @@ if __name__ == '__main__':
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
  
-    # Defining unique pipeline identity
+    # set a stable pipeline name
     unique_pipeline_name = 'adult_census_pipeline_v2'
     print(f"Starting TFX Pipeline: {unique_pipeline_name}")
  
